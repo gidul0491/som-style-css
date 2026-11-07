@@ -61,4 +61,26 @@ describe("emitStyle atomic", () => {
     expect(out.css).toContain(":hover");
     expect(out.css).toContain("color:red");
   });
+
+  it("scopes every selector in a comma-separated list", () => {
+    const out = emitStyle(
+      {
+        base: {
+          "& a, & button": { color: "red" },
+          "a, button": { color: "blue" },
+          "& :is(a, button), &.active": { color: "green" },
+        },
+      },
+      ctx
+    );
+    const compoundClass = out.className
+      .split(" ")
+      .find((className) => /-n/.test(className));
+    const scope = `.${compoundClass}`;
+    expect(out.css).toContain(`${scope} a, ${scope} button { color:red; }`);
+    expect(out.css).toContain(`${scope} a, ${scope} button { color:blue; }`);
+    expect(out.css).toContain(
+      `${scope} :is(a, button), ${scope}.active { color:green; }`
+    );
+  });
 });
