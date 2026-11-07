@@ -2,6 +2,10 @@
 
 ## 0.2.3
 
+### 바뀐 것
+
+**스캐폴드의 `preset/` 폴더 이름을 `components/`로 바꿨습니다.** 여러 화면에서 같이 쓰는 UI 스타일(`button.js`, `panel.js` …)을 두는 곳입니다. 라이브러리는 폴더 이름을 쓰지 않으므로, 이미 `som-style/preset/`을 쓰는 프로젝트는 그대로 둬도 됩니다.
+
 ### 고친 것
 
 **개별 속성이 묶음 속성에 덮이던 문제.** `{ padding: 0, paddingTop: "8px" }`처럼 같이 쓰면 위쪽 여백은 8px이어야 하지만, 다른 파일이 `paddingTop: "8px"`를 먼저 쓰면 `padding:0`이 시트에서 뒤로 가서 위쪽 여백이 0이 됐습니다. 이제 같은 화면 구간 안에서는 묶음 속성(`padding`, `border`, `inset` …)이 항상 개별 속성(`paddingTop`, `borderTopColor`, `top` …)보다 앞에 오고, 중첩 규칙(`&:hover` 등)은 그 뒤에 옵니다. 빌드, 런타임, SSR 세 경로에 모두 적용됩니다.

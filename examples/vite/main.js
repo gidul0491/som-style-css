@@ -33,7 +33,7 @@ import {
   row,
   rowWrap,
   stack,
-} from "./som-style/preset";
+} from "./som-style/components";
 
 const root = document.querySelector("#app");
 root.className = app;
@@ -47,17 +47,17 @@ root.innerHTML = `
         필요할 때만 PC 스타일을 덮어쓰세요.
       </p>
       <div class="${row}">
-        <a class="${button}" href="#presets">프리셋 보기</a>
+        <a class="${button}" href="#components">공통 UI 보기</a>
         <a class="${buttonGhost}" href="https://github.com/gidul0491/som-style-css">GitHub</a>
         <button type="button" class="${buttonGhost}" id="theme-toggle">테마</button>
       </div>
     </section>
 
-    <section id="presets" class="${grid}">
+    <section id="components" class="${grid}">
       <article class="${panel} ${stack}">
         <h2 class="${sectionTitle}">Panel</h2>
         <p class="${muted}">
-          패널 프리셋입니다. 테두리와 약한 그림자가 있습니다.
+          공통 패널입니다. 테두리와 약한 그림자가 있습니다.
         </p>
         <div class="${frostCompare}">
           <div class="${panelPrimary} ${frostTint}" aria-hidden="true"></div>
@@ -107,7 +107,7 @@ root.innerHTML = `
     </section>
 
     <footer class="${footer}">
-      <p class="${muted}">panel.extend · style() · som-style/preset/</p>
+      <p class="${muted}">panel.extend · style() · som-style/components/</p>
     </footer>
   </main>
 `;

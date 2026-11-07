@@ -38,7 +38,7 @@ describe("transformForBuild", () => {
         base: { display: "flex", "flex-direction": "column", gap: "1rem" },
       });
     `;
-    const out = transformForBuild(input, "src/preset.js", ctx);
+    const out = transformForBuild(input, "src/components.js", ctx);
     const col = out.css.indexOf("flex-direction:column");
     const mediaRow = out.css.indexOf(
       "@media (min-width: 1024px){.som-pc-"

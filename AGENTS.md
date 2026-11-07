@@ -6,7 +6,7 @@
 - Prefer a value that is responsive on its own over a breakpoint override:
   `repeat(auto-fit, minmax(...))`, `clamp()`, `flex-wrap` + `flex-basis`.
   Fewer declarations to keep in sync.
-- Use `style({ base, pc })` or app `som-style/preset`.
+- Use `style({ base, pc })` or app `som-style/components`.
 - Page styles: put them anywhere you like; `style.js` in scaffold is only an example.
 - To change a few properties, use `handle.extend({ base: { ... } })`.
 - Call `style` / `.extend` only at module top level, not inside render.

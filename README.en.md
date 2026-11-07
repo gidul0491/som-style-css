@@ -32,7 +32,7 @@ Create a `som-style/` folder at the project root and copy the scaffold:
 ```bash
 mkdir som-style
 cp node_modules/som-style/scaffold/{constant.js,theme.js,config.js,style.js} som-style/
-cp -R node_modules/som-style/scaffold/preset som-style/
+cp -R node_modules/som-style/scaffold/components som-style/
 ```
 
 ---
@@ -65,10 +65,10 @@ import {
 
 All theme tokens (colors, hue, soft-border, shadow) live in project `som-style/theme.js` via `defineTheme({ light, dark })`.
 
-Presets live in project `som-style/preset/` (`button.js`, `panel.js`, ...).
+Shared UI styles live in project `som-style/components/` (`button.js`, `panel.js`, ...).
 
 ```js
-import { button, panel, stack } from "./som-style/preset";
+import { button, panel, stack } from "./som-style/components";
 ```
 
 Add custom styles with `style()` wherever you prefer.
@@ -152,11 +152,11 @@ For Cursor-only, you can also put the same text in `.cursor/rules/som-style.mdc`
 ```md
 # som-style
 
-- Use `style({ base, pc })` or app `som-style/preset/` only.
+- Use `style({ base, pc })` or app `som-style/components/` only.
 - To change a few properties: `handle.extend({ base: { ... } })`.
 - Call `style` / `.extend` only at module top level (not inside render).
 - Theme: `defineTheme({ light, dark })` in `theme.js`; use `theme.primary` in style().
-- Spacing: `constant.js` rem. Theme: `theme.js`. Shared UI: `preset/`. Page styles: anywhere you prefer.
+- Spacing: `constant.js` rem. Theme: `theme.js`. Shared UI: `components/`. Page styles: anywhere you prefer.
 - Prefer OKLCH string literals over hex for palette colors.
 ```
 
@@ -166,7 +166,7 @@ For Cursor-only, you can also put the same text in `.cursor/rules/som-style.mdc`
 
 ## Configuration
 
-Edit the files under the project **`som-style/`** folder (config, theme, constants, presets, optional example styles).
+Edit the files under the project **`som-style/`** folder (config, theme, constants, shared UI styles, optional example styles).
 
 ```
 my-app/
@@ -174,7 +174,7 @@ my-app/
     config.js
     theme.js
     constant.js
-    preset/         # shared UI (button.js, panel.js, ...)
+    components/     # shared UI (button.js, panel.js, ...)
       index.js
     style.js        # optional example only
   src/              # page styles live wherever you prefer
@@ -285,7 +285,7 @@ export const fontSize = {
 - **`config.js`**: `configure({ breakpoints })` for responsive breakpoints. `import "./theme.js"` registers the theme once.
 - **`theme.js`**: `defineTheme({ defaultTheme, light, dark })`  ->  `--som-theme-*`. Export `theme` handles for `style()`.
 - **`constant.js`**: `space`, `radius`, `fontSize` rem/px literals. Optional app-only `custom` object.
-- **`preset/`**: shared UI presets (`button.js`, `panel.js`, ...). Re-export from `index.js`.
+- **`components/`**: shared UI styles (`button.js`, `panel.js`, ...). Re-export from `index.js`.
 - **`style.js`**: example only. Put page styles wherever your project prefers.
 
 ### How to import in your app
@@ -551,6 +551,6 @@ In your own app, install with `npm install som-style` as in the Install section.
 Edit these for the demo:
 
 - `examples/vite/main.js`  -  layout, copy
-- `examples/vite/som-style/`  -  `config.js`, `theme.js`, `constant.js`, `preset/`, (demo) `style.js`
+- `examples/vite/som-style/`  -  `config.js`, `theme.js`, `constant.js`, `components/`, (demo) `style.js`
 
 After changing library `src/`, run `npm run build` at the repo root, then refresh the example dev server.

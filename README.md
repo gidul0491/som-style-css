@@ -32,7 +32,7 @@ pnpm add som-style
 ```bash
 mkdir som-style
 cp node_modules/som-style/scaffold/{constant.js,theme.js,config.js,style.js} som-style/
-cp -R node_modules/som-style/scaffold/preset som-style/
+cp -R node_modules/som-style/scaffold/components som-style/
 ```
 
 ---
@@ -65,10 +65,10 @@ import {
 
 모든 테마 변수(색·hue·soft-border·shadow)는 프로젝트 `som-style/theme.js`의 `defineTheme({ light, dark })`에서 수정합니다.
 
-프리셋은 프로젝트 `som-style/preset/`에 둡니다 (`button.js`, `panel.js` …).
+공통 UI 스타일은 프로젝트 `som-style/components/`에 둡니다 (`button.js`, `panel.js` …).
 
 ```js
-import { button, panel, stack } from "./som-style/preset";
+import { button, panel, stack } from "./som-style/components";
 ```
 
 커스텀 스타일을 생성하려면 원하는 곳에 `style()`을 추가하면 됩니다.
@@ -152,11 +152,11 @@ Cursor만 쓸 거면 `.cursor/rules/som-style.mdc`에도 같은 내용을 넣어
 ```md
 # som-style
 
-- 스타일은 `style({ base, pc })` 또는 앱 `som-style/preset/`만 사용.
+- 스타일은 `style({ base, pc })` 또는 앱 `som-style/components/`만 사용.
 - 일부 속성만 바꿀 때: `handle.extend({ base: { ... } })`.
 - `style` / `.extend`는 모듈 최상단에서만 호출 (렌더 안 금지).
 - 테마: `theme.js`에서 `defineTheme({ light, dark })`, style()에서는 `theme.primary`.
-- 간격: `constant.js` rem. 테마: `theme.js`. 공통 UI: `preset/`. 페이지 스타일: 원하는 위치.
+- 간격: `constant.js` rem. 테마: `theme.js`. 공통 UI: `components/`. 페이지 스타일: 원하는 위치.
 - 팔레트 색은 OKLCH 문자열 리터럴. 임의 hex 지양.
 ```
 
@@ -174,7 +174,7 @@ my-app/
     config.js
     theme.js
     constant.js
-    preset/         # shared UI (button.js, panel.js, …)
+    components/     # shared UI (button.js, panel.js, …)
       index.js
     style.js        # optional example only
   src/              # page styles live wherever you prefer
@@ -286,7 +286,7 @@ export const fontSize = {
 - **`config.js`**: `configure({ breakpoints })`로 반응형 중단점 설정. `import "./theme.js"`로 최초 테마 등록.
 - **`theme.js`**: `defineTheme({ defaultTheme, light, dark })` — `--som-theme-*`. `export const theme` 핸들을 style()에서 사용.
 - **`constant.js`**: `space`, `radius`, `fontSize` 등 rem/px 리터럴. 앱 전용 `custom` 객체 추가 가능.
-- **`preset/`**: 공통 UI 프리셋 (`button.js`, `panel.js` …). `index.js`로 re-export.
+- **`components/`**: 공통 UI 스타일 (`button.js`, `panel.js` …). `index.js`로 re-export.
 - **`style.js`**: 예시용. 페이지 스타일은 프로젝트 관례에 맞게 두세요.
 
 ### 앱에서 설정 불러오기
@@ -552,6 +552,6 @@ npm run dev
 데모에서 바로 바꿀 파일:
 
 - `examples/vite/main.js` — 레이아웃·문구
-- `examples/vite/som-style/` — `config.js`, `theme.js`, `constant.js`, `preset/`, (데모용) `style.js`
+- `examples/vite/som-style/` — `config.js`, `theme.js`, `constant.js`, `components/`, (데모용) `style.js`
 
 라이브러리 `src/`를 수정했다면 저장소 루트에서 `npm run build` 한 뒤 예제 dev를 새로고침하세요.
