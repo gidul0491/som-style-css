@@ -71,6 +71,33 @@ describe("cascade ordering", () => {
     expect(css.split("color:gray")).toHaveLength(2);
   });
 
+  it("puts longhands after their shorthands no matter which module emitted first", () => {
+    const a = emitStyle(
+      { base: { paddingTop: "8px", borderTopColor: "red", top: 0 } },
+      ctx
+    );
+    const b = emitStyle(
+      { base: { padding: 0, paddingTop: "8px", border: "1px solid", inset: 0 } },
+      ctx
+    );
+
+    const css = composeAtomCss([...a.atoms, ...b.atoms]);
+    expect(indexOfAll(css, "{padding:0;}")).toBeLessThan(
+      indexOfAll(css, "padding-top:8px")
+    );
+    expect(indexOfAll(css, "border:1px solid")).toBeLessThan(
+      indexOfAll(css, "border-top-color:red")
+    );
+    expect(indexOfAll(css, "inset:0")).toBeLessThan(indexOfAll(css, "{top:0;}"));
+  });
+
+  it("puts nested rules after flat atoms in the same bucket", () => {
+    const a = emitStyle({ base: { "&:hover": { color: "red" } } }, ctx);
+    const b = emitStyle({ base: { color: "gray" } }, ctx);
+    const css = composeAtomCss([...a.atoms, ...b.atoms]);
+    expect(indexOfAll(css, "color:gray")).toBeLessThan(indexOfAll(css, ":hover"));
+  });
+
   it("buildSharedCss puts theme CSS first, then ordered atoms", () => {
     const a = emitStyle({ base: { display: "grid" }, pc: { color: "blue" } }, ctx);
     const b = emitStyle({ base: { color: "gray" }, sm: { color: "green" } }, ctx);
@@ -154,4 +181,14 @@ describe("transformForBuild ordering", () => {
     });
     expect(css.startsWith("@layer som.base, som.sm, som.pc;")).toBe(true);
   });
+
+  it("extracts nested at-rule keys", () => {
+    const { css } = transformForBuild(
+      `export const link = style({ base: { "@media (hover: hover)": { "&:hover": { color: "red" } } } });`,
+      "link.js",
+      ctx
+    );
+    expect(css).toMatch(/@media \(hover: hover\)\{\.som-n[a-z0-9]+:hover \{ color:red; \}\}/);
+  });
 });
+

@@ -1,4 +1,5 @@
 import {
+  compareCascadePosition,
   cssIdent,
   layerName,
   parsePxNumeric,
@@ -11,7 +12,10 @@ export type ComposeCssOptions = {
   cascadeLayers?: boolean;
 };
 
-/** Dedupe by atom id (first wins), then order base → ascending breakpoints. */
+/**
+ * Dedupe by atom id (first wins), then order base → ascending breakpoints,
+ * shorthands before longhands inside each bucket.
+ */
 export const sortAtoms = (atoms: Iterable<EmitAtom>): EmitAtom[] => {
   const seen = new Set<string>();
   const unique: EmitAtom[] = [];
@@ -20,15 +24,18 @@ export const sortAtoms = (atoms: Iterable<EmitAtom>): EmitAtom[] => {
     seen.add(atom.id);
     unique.push(atom);
   }
-  // Array#sort is stable, so atoms in the same bucket keep emission order.
-  return unique.sort((a, b) => a.order - b.order);
+  // Array#sort is stable, so equal positions keep emission order.
+  return unique.sort(compareCascadePosition);
 };
 
-/** One rule's CSS, layer-wrapped when cascade layers are on. */
-export const atomCss = (
+/** An atom's standalone rules, each layer-wrapped when cascade layers are on. */
+export const atomRules = (
   atom: EmitAtom,
   options: ComposeCssOptions = {}
-): string => (options.cascadeLayers ? `@layer ${atom.layer}{${atom.css}}` : atom.css);
+): string[] =>
+  options.cascadeLayers
+    ? atom.rules.map((rule) => `@layer ${atom.layer}{${rule}}`)
+    : atom.rules;
 
 /** `@layer som.base, som.pc;` — must come before any layered rule. */
 export const layerOrderRule = (layers: string[]): string => {
@@ -73,7 +80,7 @@ export const composeAtomCss = (
   options: ComposeCssOptions = {}
 ): string => {
   const sorted = sortAtoms(atoms);
-  const rules = sorted.map((atom) => atomCss(atom, options));
+  const rules = sorted.flatMap((atom) => atomRules(atom, options));
   if (!options.cascadeLayers) return rules.join("\n");
   const order = layerOrderRule(sorted.map((atom) => atom.layer));
   return [order, ...rules].filter(Boolean).join("\n");

@@ -15,13 +15,21 @@ export type EmitStyleContext = {
 
 export type EmitAtom = {
   id: string;
-  /** Single rule (media-wrapped for breakpoints), without any `@layer`. */
-  css: string;
+  /**
+   * Standalone rules (media-wrapped for breakpoints), without any `@layer`.
+   * A flat declaration has one; a nested compound can have several.
+   */
+  rules: string[];
   /**
    * Cascade bucket. 0 for base, otherwise the breakpoint min-width in px.
    * Sorting atoms by this makes emission order irrelevant.
    */
   order: number;
+  /**
+   * Position inside one bucket: shorthands first, then longhands, then nested
+   * compounds. Keeps `paddingTop` winning over `padding` in any emission order.
+   */
+  priority: number;
   /** Breakpoint key this atom belongs to (null for base). */
   bpKey: string | null;
   /** Layer name used when `cascadeLayers` is on (e.g. `som.pc`). */
@@ -85,44 +93,49 @@ const splitFlatAndNested = (style: StyleObject) => {
   return { flat, nested };
 };
 
-/** Nested selectors (&:hover, descendants) stay as one compound class. */
-const processNestedObject = (
-  style: StyleObject,
-  className: string,
-  selectorPrefix = ""
-) => {
-  let mainRules = "";
-  let extraRules = "";
+/**
+ * Turns a nested style object into standalone rules under `parentSelector`.
+ * Selector keys (`&:hover`, `& a`, `a`) nest inside the parent selector, so
+ * `"&:hover": { "& span": … }` targets `.c:hover span`. At-rule keys
+ * (`@media`, `@supports`, `@container`) wrap the parent's rules in that condition.
+ */
+const nestedRules = (style: StyleObject, parentSelector: string): string[] => {
+  let declarations = "";
+  const childRules: string[] = [];
 
-  Object.entries(style).forEach(([key, value]) => {
-    if (value === undefined || value === null) return;
+  for (const [key, value] of Object.entries(style)) {
+    if (value === undefined || value === null) continue;
 
-    if (typeof value === "object" && !Array.isArray(value)) {
-      const subSelector = scopeSelectorList(key, `.${className}`);
-      const processed = processNestedObject(value, className, subSelector);
-      extraRules += processed.mainRules + processed.extraRules;
+    if (typeof value !== "object" || Array.isArray(value)) {
+      declarations += `${camelToKebab(key)}:${cssValue(value as string | number)};`;
+    } else if (key.startsWith("@")) {
+      const conditionedRules = nestedRules(value, parentSelector);
+      childRules.push(...conditionedRules.map((rule) => `${key}{${rule}}`));
     } else {
-      mainRules += `${camelToKebab(key)}:${cssValue(value as string | number)};`;
+      const childSelector = scopeSelectorList(key, parentSelector);
+      childRules.push(...nestedRules(value, childSelector));
     }
-  });
-
-  if (selectorPrefix && mainRules) {
-    return { mainRules: `${selectorPrefix} { ${mainRules} }`, extraRules };
   }
-  return { mainRules, extraRules };
+
+  const parentRule = declarations
+    ? [`${parentSelector} { ${declarations} }`]
+    : [];
+  return [...parentRule, ...childRules];
 };
 
 /**
- * Scopes every selector in a comma list to the owning class:
- * `& a, & button` -> `.c a, .c button`, `a, button` -> `.c a, .c button`.
- * Commas inside `()`, `[]` or quotes (e.g. `:is(a, b)`) do not split the list.
+ * Scopes every selector in a comma list to every parent selector:
+ * `& a, & button` under `.c` -> `.c a, .c button`; `a, button` likewise.
+ * Commas inside `()`, `[]` or quotes (e.g. `:is(a, b)`) do not split a list.
  */
-const scopeSelectorList = (selectorList: string, scopeSelector: string) =>
-  splitTopLevelCommas(selectorList)
-    .map((selector) =>
-      selector.includes("&")
-        ? selector.split("&").join(scopeSelector)
-        : `${scopeSelector} ${selector}`
+const scopeSelectorList = (selectorList: string, parentSelectorList: string) =>
+  splitTopLevelCommas(parentSelectorList)
+    .flatMap((parentSelector) =>
+      splitTopLevelCommas(selectorList).map((selector) =>
+        selector.includes("&")
+          ? selector.split("&").join(parentSelector)
+          : `${parentSelector} ${selector}`
+      )
     )
     .join(", ");
 
@@ -167,6 +180,37 @@ const isValidCssLength = (val: string): boolean => {
 /** Breakpoint atoms must never tie with base (order 0) after sorting. */
 const bucketOrder = (numValue: number) => Math.max(1, numValue);
 
+/**
+ * A longhand must sit after its shorthand, or `padding:0` emitted later by
+ * another module would erase `padding-top:8px`. Hyphen count follows
+ * shorthand depth for almost every property (`border` < `border-top` <
+ * `border-top-color`, `flex` < `flex-grow`); the table holds the exceptions.
+ */
+const propertyPriority = (kebabProperty: string): number =>
+  SHORTHAND_DEPTH_EXCEPTIONS[kebabProperty] ??
+  (kebabProperty.match(/-/g)?.length ?? 0);
+
+const SHORTHAND_DEPTH_EXCEPTIONS: Record<string, number> = {
+  "flex-flow": 0,
+  "place-content": 0,
+  "place-items": 0,
+  "place-self": 0,
+  top: 2,
+  right: 2,
+  bottom: 2,
+  left: 2,
+};
+
+/** Nested rules (`&:hover`, `@supports` …) come after every flat atom. */
+const NESTED_COMPOUND_PRIORITY = 100;
+
+/** Sheet order: base → ascending breakpoints, shorthand → longhand inside each. */
+export const compareCascadePosition = (a: EmitAtom, b: EmitAtom) =>
+  a.order - b.order || a.priority - b.priority;
+
+const wrapInMinWidth = (rule: string, mediaMinWidth: string | null) =>
+  mediaMinWidth ? `@media (min-width: ${mediaMinWidth}){${rule}}` : rule;
+
 const makeAtom = (
   prefix: string,
   bpKey: string | null,
@@ -181,11 +225,14 @@ const makeAtom = (
   const id = bpKey
     ? `${prefix}-${bpToken(bpKey)}-${core}`
     : `${prefix}-${core}`;
-  const decl = `.${id}{${kebab}:${normalized};}`;
-  const css = mediaMinWidth
-    ? `@media (min-width: ${mediaMinWidth}){${decl}}`
-    : decl;
-  return { id, css, order, bpKey, layer: layerName(prefix, bpKey) };
+  return {
+    id,
+    rules: [wrapInMinWidth(`.${id}{${kebab}:${normalized};}`, mediaMinWidth)],
+    order,
+    priority: propertyPriority(kebab),
+    bpKey,
+    layer: layerName(prefix, bpKey),
+  };
 };
 
 const makeNestedCompound = (
@@ -201,14 +248,17 @@ const makeNestedCompound = (
   const id = bpKey
     ? `${prefix}-${bpToken(bpKey)}-n${nestHash}`
     : `${prefix}-n${nestHash}`;
-  const processed = processNestedObject(nested, id);
-  const body = `${processed.mainRules}${processed.extraRules}`.trim();
-  if (!body) return null;
+  const compoundRules = nestedRules(nested, `.${id}`);
+  if (compoundRules.length === 0) return null;
 
-  const css = mediaMinWidth
-    ? `@media (min-width: ${mediaMinWidth}){${body}}`
-    : body;
-  return { id, css, order, bpKey, layer: layerName(prefix, bpKey) };
+  return {
+    id,
+    rules: compoundRules.map((rule) => wrapInMinWidth(rule, mediaMinWidth)),
+    order,
+    priority: NESTED_COMPOUND_PRIORITY,
+    bpKey,
+    layer: layerName(prefix, bpKey),
+  };
 };
 
 type ResolvedBreakpoint = {
@@ -334,7 +384,10 @@ export const emitStyle = (
 
   return {
     className: uniqueClasses.join(" "),
-    css: uniqueAtoms.map((a) => a.css).join("\n"),
+    css: [...uniqueAtoms]
+      .sort(compareCascadePosition)
+      .flatMap((atom) => atom.rules)
+      .join("\n"),
     styleKey,
     atoms: uniqueAtoms,
   };
