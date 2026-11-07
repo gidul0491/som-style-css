@@ -33,7 +33,8 @@ describe("somStyle production build", () => {
       ],
       [
         routeAId,
-        `export const panel = style({
+        `import { style, variants } from "som-style";
+export const panel = style({
            base: { display: "block" },
            pc: { width: "248px" },
          });
@@ -41,7 +42,8 @@ describe("somStyle production build", () => {
       ],
       [
         routeBId,
-        `export const content = style({
+        `import { style, variants } from "som-style";
+export const content = style({
            base: { width: "100%" },
            pc: { width: "248px" },
          });
@@ -104,7 +106,8 @@ describe("somStyle production build", () => {
       ],
       [
         qualityId,
-        `export const grid = style({
+        `import { style, variants } from "som-style";
+export const grid = style({
            base: { display: "grid" },
            pc: { gridTemplateColumns: "repeat(4,minmax(0,1fr))" },
          });
@@ -112,7 +115,8 @@ describe("somStyle production build", () => {
       ],
       [
         keywordsId,
-        `export const form = style({
+        `import { style, variants } from "som-style";
+export const form = style({
            base: { gridTemplateColumns: "repeat(2,minmax(0,1fr))" },
          });
          console.log(form);`,
@@ -164,7 +168,8 @@ describe("somStyle production build", () => {
       const next = i + 1 < COUNT ? `import "./mod-${i + 1}.js";\n` : "";
       files.set(
         id,
-        `${next}export const box = style({ base: { zIndex: ${100 + i} } });
+        `import { style, variants } from "som-style";
+${next}export const box = style({ base: { zIndex: ${100 + i} } });
          console.log(box);`
       );
     });
@@ -200,7 +205,8 @@ describe("somStyle production build", () => {
     const files = new Map([
       [
         mainId,
-        `export const box = style({ base: { color: "red" }, pc: { color: "blue" } });
+        `import { style, variants } from "som-style";
+export const box = style({ base: { color: "red" }, pc: { color: "blue" } });
          console.log(box);`,
       ],
     ]);

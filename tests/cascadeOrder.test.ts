@@ -156,7 +156,8 @@ describe("cascadeLayers", () => {
 });
 
 describe("transformForBuild ordering", () => {
-  const source = `
+  const source = `import { style, variants } from "som-style";
+
     export const grid = style({
       base: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))" },
       sm: { gap: "8px" },
@@ -184,7 +185,8 @@ describe("transformForBuild ordering", () => {
 
   it("extracts nested at-rule keys", () => {
     const { css } = transformForBuild(
-      `export const link = style({ base: { "@media (hover: hover)": { "&:hover": { color: "red" } } } });`,
+      `import { style, variants } from "som-style";
+export const link = style({ base: { "@media (hover: hover)": { "&:hover": { color: "red" } } } });`,
       "link.js",
       ctx
     );

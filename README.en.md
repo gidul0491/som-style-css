@@ -310,7 +310,7 @@ import { space } from "./som-style/constant.js";
 ## Using with Vite (recommended  -  near zero-runtime)
 
 With `somStyle()`, static styles are bundled as **real CSS** in both development and production, so style application is not delayed.  
-Same-file `style({ ... })`, `variants({ ... })`, and `box.extend({ ... })` become class-name strings (or a variants map).
+`style({ ... })` and `variants({ ... })` imported from `som-style`, and `.extend({ ... })` on their handles, become class-name strings (or a variants map). Extending a handle imported from another file (`button` from `./som-style/components`) works too. Calls that are not som-style's, such as zod's `schema.extend()`, are left alone.
 
 ```js
 // vite.config.js
@@ -361,7 +361,13 @@ export const box = style(styles);
 // OK  -  import the handle for markup
 // style.js: export const box = style({ base: { display: "flex" } });
 import { box } from "./style.js";
+
+// OK  -  import a handle from another file and .extend() it
+import { button } from "./som-style/components";
+export const wideButton = button.extend({ base: { width: "100%" } });
 ```
+
+Numbers get `px` like React inline styles (`width: 320` -> `320px`). Properties that take a bare number, such as `opacity`, `zIndex`, `lineHeight` and `flex`, are left as is.
 
 Edits during development update the page immediately.
 

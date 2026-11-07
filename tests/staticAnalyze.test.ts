@@ -4,36 +4,40 @@ import { transformForBuild } from "../src/vite-plugin.js";
 
 describe("staticAnalyze", () => {
   it("accepts object literal", () => {
-    const code = `const box = style({ base: { display: "flex" }, pc: { gap: "1rem" } });`;
-    const hits = analyzeStyleCalls(code);
+    const code = `import { style, variants } from "som-style";
+const box = style({ base: { display: "flex" }, pc: { gap: "1rem" } });`;
+    const { hits } = analyzeStyleCalls(code);
     expect(hits).toHaveLength(1);
     expect(hits[0].kind).toBe("static");
     expect(hits[0].options?.base).toEqual({ display: "flex" });
   });
 
   it("accepts same-file const object", () => {
-    const code = `
+    const code = `import { style, variants } from "som-style";
+
       const styles = { base: { display: "flex" }, pc: { gap: "1rem" } };
       const box = style(styles);
     `;
-    const hits = analyzeStyleCalls(code);
+    const { hits } = analyzeStyleCalls(code);
     expect(hits).toHaveLength(1);
     expect(hits[0].kind).toBe("static");
     expect(hits[0].options?.base).toEqual({ display: "flex" });
   });
 
   it("marks unresolved variable as dynamic", () => {
-    const code = `const box = style(opts);`;
-    const hits = analyzeStyleCalls(code);
+    const code = `import { style, variants } from "som-style";
+const box = style(opts);`;
+    const { hits } = analyzeStyleCalls(code);
     expect(hits[0].kind).toBe("dynamic");
   });
 
   it("statically merges same-file .extend()", () => {
-    const code = `
+    const code = `import { style, variants } from "som-style";
+
       const box = style({ base: { color: "red", padding: "1rem" } });
       const tight = box.extend({ base: { padding: "0.5rem" } });
     `;
-    const hits = analyzeStyleCalls(code);
+    const { hits } = analyzeStyleCalls(code);
     expect(hits).toHaveLength(2);
     expect(hits.every((h) => h.kind === "static")).toBe(true);
     expect(hits[1].options?.base).toEqual({
@@ -43,24 +47,26 @@ describe("staticAnalyze", () => {
   });
 
   it("marks .extend with dynamic patch as dynamic", () => {
-    const code = `
+    const code = `import { style, variants } from "som-style";
+
       const box = style({ base: { color: "red" } });
       for (const p of patches) {
         box.extend(p);
       }
     `;
-    const hits = analyzeStyleCalls(code);
+    const { hits } = analyzeStyleCalls(code);
     expect(hits.some((h) => h.kind === "dynamic")).toBe(true);
   });
 
   it("accepts static variants() map", () => {
-    const code = `
+    const code = `import { style, variants } from "som-style";
+
       const tone = variants({
         ok: { base: { color: "green" } },
         bad: { base: { color: "red" } },
       });
     `;
-    const hits = analyzeStyleCalls(code);
+    const { hits } = analyzeStyleCalls(code);
     expect(hits).toHaveLength(1);
     expect(hits[0].kind).toBe("variants");
     expect(hits[0].variantMap?.ok?.base).toEqual({ color: "green" });
@@ -80,7 +86,7 @@ describe("staticAnalyze", () => {
         },
       });
     `;
-    const hits = analyzeStyleCalls(code, {
+    const { hits } = analyzeStyleCalls(code, {
       tokenMaps: new Map([["space", { s4: "1rem" }]]),
     });
     expect(hits).toHaveLength(1);
@@ -100,7 +106,7 @@ describe("staticAnalyze", () => {
         base: { color: theme.warning, border: theme.softBorder },
       });
     `;
-    const hits = analyzeStyleCalls(code);
+    const { hits } = analyzeStyleCalls(code);
     expect(hits).toHaveLength(1);
     expect(hits[0].kind).toBe("static");
     expect(hits[0].options?.base).toEqual({
@@ -121,7 +127,7 @@ describe("staticAnalyze", () => {
         },
       });
     `;
-    const hits = analyzeStyleCalls(code, {
+    const { hits } = analyzeStyleCalls(code, {
       tokenMaps: new Map([
         ["space", { s9: "4rem" }],
         [
@@ -150,7 +156,7 @@ describe("staticAnalyze", () => {
         base: { gap: brand.heroGap, color: brand.accent },
       });
     `;
-    const hits = analyzeStyleCalls(code, {
+    const { hits } = analyzeStyleCalls(code, {
       tokenMaps: new Map([
         [
           "brand",
@@ -176,10 +182,84 @@ describe("staticAnalyze", () => {
         base: { padding: myStuff.customPad },
       });
     `;
-    const hits = analyzeStyleCalls(code);
+    const { hits } = analyzeStyleCalls(code);
     expect(hits).toHaveLength(1);
     expect(hits[0].kind).toBe("dynamic");
     expect(hits[0].error).toMatch(/padding/);
+  });
+});
+
+describe("only som-style calls are analyzed", () => {
+  it.each([
+    ["zod .extend()", `import { z } from "zod"; const User = z.object({ id: z.string() }); export const Admin = User.extend({ role: z.string() });`],
+    ["dayjs.extend()", `import dayjs from "dayjs"; import utc from "dayjs/plugin/utc"; dayjs.extend(utc);`],
+    ["d3 .style()", `import * as d3 from "d3"; d3.select("svg").style("fill", "red");`],
+    ["a local style() helper", `const style = (o) => o; export const s = style({ color: "red" });`],
+  ])("leaves %s alone", (_, code) => {
+    expect(analyzeStyleCalls(code).hits).toEqual([]);
+  });
+
+  it("follows renamed and namespace imports", () => {
+    const { hits } = analyzeStyleCalls(`
+      import { style as css } from "som-style";
+      import * as som from "som-style/solid";
+      export const a = css({ base: { color: "red" } });
+      export const b = som.style({ base: { color: "blue" } });
+    `);
+    expect(hits.map((hit) => hit.options?.base)).toEqual([
+      { color: "red" },
+      { color: "blue" },
+    ]);
+  });
+
+  it("extends a handle imported from another module", () => {
+    const { hits } = analyzeStyleCalls(
+      `import { button } from "./som-style/components";
+       export const wideButton = button.extend({ base: { width: "100%" } });`,
+      {
+        importedHandles: new Map([
+          ["button", { ok: true, options: { base: { color: "red", width: "auto" } } }],
+        ]),
+      }
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0].kind).toBe("static");
+    expect(hits[0].options?.base).toEqual({ color: "red", width: "100%" });
+  });
+
+  it("reports which handles a module exports", () => {
+    const { exportedHandles } = analyzeStyleCalls(`
+      import { style } from "som-style";
+      const panel = style({ base: { padding: "1rem" } });
+      export const button = style({ base: { color: "red" } });
+      export { panel as card };
+    `);
+    expect([...exportedHandles.keys()]).toEqual(["button", "card"]);
+  });
+});
+
+describe("static values", () => {
+  const themeTokens = new Map([["theme", { primary: "var(--som-theme-primary)" }]]);
+
+  it("names a theme token theme.js does not define", () => {
+    const { hits } = analyzeStyleCalls(
+      `import { style } from "som-style";
+       import { theme } from "./som-style/theme.js";
+       export const box = style({ base: { border: \`1px solid \${theme.primry}\` } });`,
+      { tokenMaps: themeTokens }
+    );
+    expect(hits[0].kind).toBe("dynamic");
+    expect(hits[0].error).toContain('"theme.primry" is not defined');
+  });
+
+  it("accepts negative numbers and same-file const values", () => {
+    const { hits } = analyzeStyleCalls(`
+      import { style } from "som-style";
+      const gap = "8px";
+      export const box = style({ base: { gap, marginTop: -1 } });
+    `);
+    expect(hits[0].kind).toBe("static");
+    expect(hits[0].options?.base).toEqual({ gap: "8px", marginTop: -1 });
   });
 });
 
@@ -250,7 +330,8 @@ describe("transformForBuild", () => {
   });
 
   it("throws on dynamic style()", () => {
-    expect(() => transformForBuild(`style(x);`, "src/x.js", ctx)).toThrow(
+    expect(() => transformForBuild(`import { style, variants } from "som-style";
+style(x);`, "src/x.js", ctx)).toThrow(
       /static/i
     );
   });

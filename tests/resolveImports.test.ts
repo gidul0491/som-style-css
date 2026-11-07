@@ -41,7 +41,8 @@ describe("cross-file style options", () => {
     const external = new Map([
       ["boxOpts", { base: { color: "red" } }],
     ]);
-    const hits = analyzeStyleCalls(`const box = style(boxOpts);`, {
+    const { hits } = analyzeStyleCalls(`import { style, variants } from "som-style";
+const box = style(boxOpts);`, {
       externalOptions: external,
     });
     expect(hits).toHaveLength(1);
@@ -59,10 +60,11 @@ describe("cross-file style options", () => {
       ["boxOpts", { base: { color: "blue" } }],
     ]);
     const out = transformForBuild(
-      `import { boxOpts } from "./shared.js";\nexport const box = style(boxOpts);`,
+      `import { style, variants } from "som-style";
+import { boxOpts } from "./shared.js";\nexport const box = style(boxOpts);`,
       "src/a.js",
       ctx,
-      external
+      { externalOptions: external }
     );
     expect(out.code).toMatch(/export const box = Object\.assign\(Object\("[^"]+"\)/);
     expect(out.css).toContain("color:blue");

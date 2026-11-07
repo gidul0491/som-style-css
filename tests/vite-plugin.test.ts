@@ -22,7 +22,8 @@ describe("transformForBuild", () => {
   });
 
   it("throws on dynamic call", () => {
-    expect(() => transformForBuild(`style(x);`, "src/x.js", ctx)).toThrow(
+    expect(() => transformForBuild(`import { style, variants } from "som-style";
+style(x);`, "src/x.js", ctx)).toThrow(
       /static|extraction/i
     );
   });

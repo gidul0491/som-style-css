@@ -14,6 +14,16 @@
 
 **`@media` / `@supports` / `@container` 키가 깨진 CSS를 만들던 문제.** `"@media (hover: hover)": { color: "red" }`가 브라우저가 무시하는 `.c @media …`로 나왔습니다. 이제 현재 선택자를 그 조건으로 감쌉니다. 타입에서도 `@`로 시작하는 키를 받습니다.
 
+**som-style과 상관없는 `.extend()` / `.style()`에서 빌드가 멈추던 문제.** Vite 플러그인이 import를 보지 않고 함수 이름만 보고 분석해서, zod의 `schema.extend()`, `dayjs.extend()`, d3의 `.style()`, 직접 만든 `style()` 함수가 있는 파일에서 빌드가 실패했습니다. 이제 `som-style`에서 import한 `style` / `variants` / `recipe`와 그 핸들의 `.extend()`만 분석합니다. `import { style as css }`, `import * as som`처럼 이름을 바꾼 import도 빌드 때 추출됩니다.
+
+**다른 파일에서 가져온 스타일에 `.extend()`하면 빌드가 멈추던 문제.** `import { button } from "./som-style/components"` 뒤 `button.extend({...})`가 빌드 에러였습니다. 이제 import를 따라가서(`index.js`의 re-export 포함) 빌드 때 CSS로 뽑습니다.
+
+**theme 오타가 조용히 무시되던 문제.** `theme.primry`처럼 `theme.js`에 없는 이름을 쓰면 없는 CSS 변수가 그대로 나가 색이 빠졌습니다. 이제 빌드 에러로 어떤 이름이 없는지 알려 줍니다.
+
+**단위 없는 숫자가 무시되던 문제.** `width: 100`이 `width:100`으로 나가 브라우저가 버렸습니다. 이제 React 인라인 스타일처럼 `px`을 붙입니다. `opacity`, `zIndex`, `lineHeight`, `flex` 등 원래 단위가 없는 속성과 `0`, CSS 변수는 그대로 둡니다.
+
+**빌드 때 추출되지 않던 값.** `marginTop: -1` 같은 음수와, 같은 파일의 `const gap = "8px"`를 쓴 `{ gap }` 축약형이 이제 추출됩니다.
+
 ## 0.2.2
 
 ### 고친 것

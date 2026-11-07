@@ -28,43 +28,88 @@ export type AnalyzeExtras = {
   /** Local name → options resolved from another module's exported object literal */
   externalOptions?: Map<string, ResponsiveStyleOptions>;
   /**
-   * Local binding → string token map (from project constant.js or same-file const).
-   * Any export name is allowed; values are used as-is for static extract.
+   * Local binding → token map (project constant.js exports, theme.js handles,
+   * same-file const). Values are used as-is for static extract.
    */
   tokenMaps?: Map<string, Record<string, string>>;
+  /** Local name → style handle exported by another project module. */
+  importedHandles?: Map<string, StyleHandleBinding>;
+};
+
+/** A som-style handle a module declares: its options, or why they are not static. */
+export type StyleHandleBinding =
+  | { ok: true; options: ResponsiveStyleOptions }
+  | { ok: false; error: string };
+
+export type StyleModuleAnalysis = {
+  hits: AnalyzeHit[];
+  /** Exported name → handle, so other modules can statically `.extend()` it. */
+  exportedHandles: Map<string, StyleHandleBinding>;
 };
 
 /** Active during analyzeStyleCalls — any constant.js export name resolves here first. */
 let activeTokenMaps: Map<string, Record<string, string>> = new Map();
+/** Active during analyzeStyleCalls — same-file `const gap = "8px"` literals. */
+let activeConstValues: Map<string, string | number> = new Map();
 
-const isStyleCallee = (node: CallExpression["callee"]): boolean => {
-  if (node.type === "Identifier") return node.name === "style";
-  if (node.type === "MemberExpression" && !node.computed) {
-    return (
-      node.property.type === "Identifier" && node.property.name === "style"
-    );
-  }
-  return false;
+const SOM_STYLE_SOURCE = /^som-style(\/(solid|runtime|solid-runtime))?$/;
+
+type SomStyleFunction = "style" | "variants" | "recipe";
+
+/** Local names bound to som-style's own functions, so look-alikes are left alone. */
+type SomStyleImports = {
+  localNames: Map<string, SomStyleFunction>;
+  namespaces: Set<string>;
 };
 
-const isVariantsCallee = (node: CallExpression["callee"]): boolean => {
-  if (node.type === "Identifier") return node.name === "variants";
-  if (node.type === "MemberExpression" && !node.computed) {
-    return (
-      node.property.type === "Identifier" && node.property.name === "variants"
-    );
-  }
-  return false;
+const collectSomStyleImports = (ast: Node): SomStyleImports => {
+  const somStyleImports: SomStyleImports = {
+    localNames: new Map(),
+    namespaces: new Set(),
+  };
+  walk(ast, (node) => {
+    if (node.type !== "ImportDeclaration") return;
+    if (!SOM_STYLE_SOURCE.test(node.source.value)) return;
+    for (const specifier of node.specifiers) {
+      if (specifier.type === "ImportNamespaceSpecifier") {
+        somStyleImports.namespaces.add(specifier.local.name);
+        continue;
+      }
+      if (specifier.type !== "ImportSpecifier") continue;
+      const importedName =
+        specifier.imported.type === "Identifier"
+          ? specifier.imported.name
+          : specifier.imported.value;
+      if (isSomStyleFunction(importedName)) {
+        somStyleImports.localNames.set(specifier.local.name, importedName);
+      }
+    }
+  });
+  return somStyleImports;
 };
 
-const isRecipeCallee = (node: CallExpression["callee"]): boolean => {
-  if (node.type === "Identifier") return node.name === "recipe";
-  if (node.type === "MemberExpression" && !node.computed) {
-    return (
-      node.property.type === "Identifier" && node.property.name === "recipe"
-    );
+const isSomStyleFunction = (name: string): name is SomStyleFunction =>
+  name === "style" || name === "variants" || name === "recipe";
+
+/** `style(…)`, `css(…)` from `import { style as css }`, or `som.style(…)`. */
+const somStyleFunctionOf = (
+  callee: CallExpression["callee"],
+  somStyleImports: SomStyleImports
+): SomStyleFunction | null => {
+  if (callee.type === "Identifier") {
+    return somStyleImports.localNames.get(callee.name) ?? null;
   }
-  return false;
+  if (
+    callee.type === "MemberExpression" &&
+    !callee.computed &&
+    callee.object.type === "Identifier" &&
+    somStyleImports.namespaces.has(callee.object.name) &&
+    callee.property.type === "Identifier" &&
+    isSomStyleFunction(callee.property.name)
+  ) {
+    return callee.property.name;
+  }
+  return null;
 };
 
 const isExtendCallee = (
@@ -80,11 +125,18 @@ const isExtendCallee = (
   );
 };
 
-const evalLiteral = (
+export const evalLiteral = (
   node: Expression
 ): string | number | boolean | null | undefined => {
   if (node.type === "StringLiteral") return node.value;
   if (node.type === "NumericLiteral") return node.value;
+  if (
+    node.type === "UnaryExpression" &&
+    node.operator === "-" &&
+    node.argument.type === "NumericLiteral"
+  ) {
+    return -node.argument.value;
+  }
   if (node.type === "BooleanLiteral") return node.value;
   if (node.type === "NullLiteral") return null;
   if (node.type === "TemplateLiteral" && node.expressions.length === 0) {
@@ -116,14 +168,29 @@ const memberPropName = (node: Expression): string | undefined => {
 };
 
 const tokenMemberToCssVar = (group: string, prop: string): string | undefined => {
-  const fromMap = activeTokenMaps.get(group)?.[prop];
-  if (fromMap != null) return fromMap;
+  const tokenMap = activeTokenMaps.get(group);
+  if (tokenMap) return tokenMap[prop];
 
   if (group === "theme") {
     return `var(--som-theme-${camelToKebabCss(prop)})`;
   }
 
   return undefined;
+};
+
+/** `theme.primry` when theme.js has no `primry`: name it instead of a generic error. */
+const findUndefinedToken = (node: Node): string | undefined => {
+  let undefinedToken: string | undefined;
+  walk(node, (child) => {
+    if (undefinedToken || child.type !== "MemberExpression") return;
+    if (child.object.type !== "Identifier") return;
+    const tokenMap = activeTokenMaps.get(child.object.name);
+    const prop = memberPropName(child as Expression);
+    if (tokenMap && prop && tokenMap[prop] == null) {
+      undefinedToken = `${child.object.name}.${prop}`;
+    }
+  });
+  return undefinedToken;
 };
 
 const evalTokenMember = (node: Expression): string | undefined => {
@@ -143,6 +210,10 @@ const evalStaticValue = (
 ): string | number | boolean | null | undefined => {
   const lit = evalLiteral(node);
   if (lit !== undefined) return lit;
+
+  if (node.type === "Identifier" && activeConstValues.has(node.name)) {
+    return activeConstValues.get(node.name);
+  }
 
   const token = evalTokenMember(node);
   if (token !== undefined) return token;
@@ -206,9 +277,12 @@ const evalStyleObject = (
 
     const lit = evalStaticValue(valueNode as Expression);
     if (lit === undefined) {
+      const undefinedToken = findUndefinedToken(valueNode);
       return {
         ok: false,
-        error: `Dynamic value for "${key}" is not allowed in static style options`,
+        error: undefinedToken
+          ? `"${undefinedToken}" is not defined (used for "${key}")`
+          : `Dynamic value for "${key}" is not allowed in static style options`,
       };
     }
     if (lit === null) continue;
@@ -262,6 +336,26 @@ const collectConstObjectBindings = (
     }
   });
 
+  return bindings;
+};
+
+/** `const gap = "8px"` / `const offset = -1` so `{ gap }` stays static. */
+const collectConstLiteralBindings = (
+  ast: Node
+): Map<string, string | number> => {
+  const bindings = new Map<string, string | number>();
+  walk(ast, (node) => {
+    if (node.type !== "VariableDeclaration") return;
+    const declaration = node as VariableDeclaration;
+    if (declaration.kind !== "const") return;
+    for (const declarator of declaration.declarations as VariableDeclarator[]) {
+      if (declarator.id.type !== "Identifier" || !declarator.init) continue;
+      const literal = evalLiteral(declarator.init as Expression);
+      if (typeof literal === "string" || typeof literal === "number") {
+        bindings.set(declarator.id.name, literal);
+      }
+    }
+  });
   return bindings;
 };
 
@@ -503,43 +597,42 @@ const analyzeStyleCall = (
   return { start, end, kind: "static", options: evaluated.options };
 };
 
+/**
+ * `.extend()` on a som-style handle: one declared in this file or imported
+ * from another project module. Anything else (zod schemas, `dayjs.extend`)
+ * is not ours and returns null.
+ */
 const analyzeExtendCall = (
   call: CallExpression,
   constObjects: Map<string, ObjectExpression>,
-  styleBindings: Map<string, ResponsiveStyleOptions>,
+  handleBindings: Map<string, StyleHandleBinding>,
+  somStyleImports: SomStyleImports,
   externalOptions?: Map<string, ResponsiveStyleOptions>
-): AnalyzeHit => {
+): AnalyzeHit | null => {
   const start = call.start ?? 0;
   const end = call.end ?? start;
   const callee = call.callee;
-
-  if (!isExtendCallee(callee)) {
-    return {
-      start,
-      end,
-      kind: "dynamic",
-      error: "Not an .extend() call",
-    };
-  }
+  if (!isExtendCallee(callee)) return null;
 
   if (callee.object.type !== "Identifier") {
+    if (!isSomStyleHandleExpression(callee.object, somStyleImports)) return null;
     return {
       start,
       end,
       kind: "dynamic",
       error:
-        ".extend() base must be a same-file const style handle (not a computed expression). Loops and dynamic bases cannot be extracted to static CSS because the build cannot know every patch at compile time.",
+        ".extend() base must be a const style handle, not an inline call. Assign the handle to a const first.",
     };
   }
 
-  const baseName = callee.object.name;
-  const baseOptions = styleBindings.get(baseName);
-  if (!baseOptions) {
+  const baseHandle = handleBindings.get(callee.object.name);
+  if (!baseHandle) return null;
+  if (!baseHandle.ok) {
     return {
       start,
       end,
       kind: "dynamic",
-      error: `.extend() base "${baseName}" is unknown in this file. Import handles from other files cannot be statically extended — extend in the same file as style(), or accept runtime emit without the plugin.`,
+      error: `.extend() base "${callee.object.name}" is not static: ${baseHandle.error}`,
     };
   }
 
@@ -571,9 +664,19 @@ const analyzeExtendCall = (
     };
   }
 
-  const options = mergeResponsiveOptions(baseOptions, patchEval.options);
+  const options = mergeResponsiveOptions(baseHandle.options, patchEval.options);
   return { start, end, kind: "static", options };
 };
+
+/** `style({…}).extend(…)` or `handle.extend({…}).extend(…)`. */
+const isSomStyleHandleExpression = (
+  node: Expression,
+  somStyleImports: SomStyleImports
+): boolean =>
+  node.type === "CallExpression" &&
+  (somStyleFunctionOf(node.callee, somStyleImports) === "style" ||
+    (isExtendCallee(node.callee) &&
+      isSomStyleHandleExpression(node.callee.object, somStyleImports)));
 
 const collectConstStringMaps = (
   constObjects: Map<string, ObjectExpression>
@@ -609,117 +712,156 @@ const collectConstStringMaps = (
 };
 
 /**
- * Finds style(), variants(), and same-file .extend() calls; resolves .extend by
- * merging known style bindings in declaration order.
+ * Finds som-style's style(), variants(), recipe() and `.extend()` calls on
+ * som-style handles, and which handles the module exports.
  */
 export const analyzeStyleCalls = (
   code: string,
   extras: AnalyzeExtras = {}
-): AnalyzeHit[] => {
+): StyleModuleAnalysis => {
   const ast = parse(code, {
     sourceType: "module",
     plugins: ["typescript", "jsx"],
   });
 
+  const somStyleImports = collectSomStyleImports(ast);
   const constObjects = collectConstObjectBindings(ast);
-  const styleBindings = new Map<string, ResponsiveStyleOptions>();
-  const externalOptions = extras.externalOptions;
+  const handleBindings = new Map<string, StyleHandleBinding>(
+    extras.importedHandles ?? []
+  );
   const tokenMaps = new Map<string, Record<string, string>>([
     ...collectConstStringMaps(constObjects),
     ...(extras.tokenMaps ?? []),
   ]);
-  const prevMaps = activeTokenMaps;
+  const previousTokenMaps = activeTokenMaps;
+  const previousConstValues = activeConstValues;
   activeTokenMaps = tokenMaps;
-
-  const hits: AnalyzeHit[] = [];
-  const seen = new Set<string>();
-
-  const addHit = (hit: AnalyzeHit) => {
-    const key = `${hit.start}:${hit.end}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    hits.push(hit);
-  };
+  activeConstValues = collectConstLiteralBindings(ast);
 
   try {
-  // Declaration order: register bindings so later .extend can see earlier style/.extend.
+    const hits = collectHits(
+      ast,
+      constObjects,
+      handleBindings,
+      somStyleImports,
+      extras.externalOptions
+    );
+    const exportedHandles = collectExportedHandles(ast, handleBindings);
+    return { hits, exportedHandles };
+  } finally {
+    activeTokenMaps = previousTokenMaps;
+    activeConstValues = previousConstValues;
+  }
+};
+
+/**
+ * Const declarations first, in source order, so a later `.extend()` sees the
+ * handle it builds on; then every remaining call (inline expressions).
+ */
+const collectHits = (
+  ast: Node,
+  constObjects: Map<string, ObjectExpression>,
+  handleBindings: Map<string, StyleHandleBinding>,
+  somStyleImports: SomStyleImports,
+  externalOptions?: Map<string, ResponsiveStyleOptions>
+): AnalyzeHit[] => {
+  const hits: AnalyzeHit[] = [];
+  const seenCalls = new Set<string>();
+
+  const analyzeCall = (call: CallExpression): AnalyzeHit | null => {
+    const callKey = `${call.start ?? 0}:${call.end ?? 0}`;
+    if (seenCalls.has(callKey)) return null;
+
+    const hit = analyzeSomStyleCall(
+      call,
+      constObjects,
+      handleBindings,
+      somStyleImports,
+      externalOptions
+    );
+    if (!hit) return null;
+    seenCalls.add(callKey);
+    hits.push(hit);
+    return hit;
+  };
+
   walk(ast, (node) => {
     if (node.type !== "VariableDeclaration") return;
-    const decl = node as VariableDeclaration;
-    if (decl.kind !== "const") return;
+    const declaration = node as VariableDeclaration;
+    if (declaration.kind !== "const") return;
 
-    for (const d of decl.declarations as VariableDeclarator[]) {
-      if (d.id.type !== "Identifier" || !d.init) continue;
-      if (d.init.type !== "CallExpression") continue;
-
-      const call = d.init;
-      const name = d.id.name;
-
-      if (isStyleCallee(call.callee)) {
-        const hit = analyzeStyleCall(call, constObjects, externalOptions);
-        addHit(hit);
-        if (hit.kind === "static" && hit.options) {
-          styleBindings.set(name, hit.options);
-        }
-        continue;
-      }
-
-      if (isVariantsCallee(call.callee)) {
-        addHit(analyzeVariantsCall(call, constObjects, externalOptions));
-        continue;
-      }
-
-      if (isRecipeCallee(call.callee)) {
-        addHit(analyzeRecipeCall(call, constObjects));
-        continue;
-      }
-
-      if (isExtendCallee(call.callee)) {
-        const hit = analyzeExtendCall(
-          call,
-          constObjects,
-          styleBindings,
-          externalOptions
+    for (const declarator of declaration.declarations as VariableDeclarator[]) {
+      if (declarator.id.type !== "Identifier") continue;
+      if (declarator.init?.type !== "CallExpression") continue;
+      const hit = analyzeCall(declarator.init);
+      if (hit && (hit.kind === "static" || hit.kind === "dynamic")) {
+        handleBindings.set(
+          declarator.id.name,
+          hit.kind === "static"
+            ? { ok: true, options: hit.options! }
+            : { ok: false, error: hit.error ?? "dynamic style options" }
         );
-        addHit(hit);
-        if (hit.kind === "static" && hit.options) {
-          styleBindings.set(name, hit.options);
-        }
       }
     }
   });
 
-  // Any remaining style() / variants() / .extend() calls (e.g. inline expressions).
   walk(ast, (node) => {
-    if (node.type !== "CallExpression") return;
-    const call = node as CallExpression;
-    const key = `${call.start ?? 0}:${call.end ?? 0}`;
-    if (seen.has(key)) return;
-
-    if (isStyleCallee(call.callee)) {
-      addHit(analyzeStyleCall(call, constObjects, externalOptions));
-      return;
-    }
-
-    if (isVariantsCallee(call.callee)) {
-      addHit(analyzeVariantsCall(call, constObjects, externalOptions));
-      return;
-    }
-
-    if (isRecipeCallee(call.callee)) {
-      addHit(analyzeRecipeCall(call, constObjects));
-      return;
-    }
-
-    if (isExtendCallee(call.callee)) {
-      addHit(
-        analyzeExtendCall(call, constObjects, styleBindings, externalOptions)
-      );
-    }
+    if (node.type === "CallExpression") analyzeCall(node as CallExpression);
   });
 
   return hits;
-  } finally {
-    activeTokenMaps = prevMaps;
+};
+
+const analyzeSomStyleCall = (
+  call: CallExpression,
+  constObjects: Map<string, ObjectExpression>,
+  handleBindings: Map<string, StyleHandleBinding>,
+  somStyleImports: SomStyleImports,
+  externalOptions?: Map<string, ResponsiveStyleOptions>
+): AnalyzeHit | null => {
+  switch (somStyleFunctionOf(call.callee, somStyleImports)) {
+    case "style":
+      return analyzeStyleCall(call, constObjects, externalOptions);
+    case "variants":
+      return analyzeVariantsCall(call, constObjects, externalOptions);
+    case "recipe":
+      return analyzeRecipeCall(call, constObjects);
+    default:
+      return analyzeExtendCall(
+        call,
+        constObjects,
+        handleBindings,
+        somStyleImports,
+        externalOptions
+      );
   }
+};
+
+/** `export const button = style(…)` and `export { button as primaryButton }`. */
+const collectExportedHandles = (
+  ast: Node,
+  handleBindings: Map<string, StyleHandleBinding>
+): Map<string, StyleHandleBinding> => {
+  const exportedHandles = new Map<string, StyleHandleBinding>();
+  walk(ast, (node) => {
+    if (node.type !== "ExportNamedDeclaration" || node.source) return;
+    if (node.declaration?.type === "VariableDeclaration") {
+      for (const declarator of node.declaration.declarations) {
+        if (declarator.id.type !== "Identifier") continue;
+        const binding = handleBindings.get(declarator.id.name);
+        if (binding) exportedHandles.set(declarator.id.name, binding);
+      }
+      return;
+    }
+    for (const specifier of node.specifiers) {
+      if (specifier.type !== "ExportSpecifier") continue;
+      const binding = handleBindings.get(specifier.local.name);
+      const exportedName =
+        specifier.exported.type === "Identifier"
+          ? specifier.exported.name
+          : specifier.exported.value;
+      if (binding) exportedHandles.set(exportedName, binding);
+    }
+  });
+  return exportedHandles;
 };

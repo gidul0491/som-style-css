@@ -55,11 +55,57 @@ export const hash = (str: string) => {
 const camelToKebab = (str: string) =>
   str.replace(/([A-Z])/g, "-$1").toLowerCase();
 
-/** Collapse whitespace so multiline template literals still emit valid CSS. */
-const cssValue = (value: string | number): string =>
-  typeof value === "number"
-    ? String(value)
-    : value.replace(/\s+/g, " ").trim();
+/**
+ * Numbers get `px` like React inline styles (`width: 100` → `100px`), except
+ * on properties that take a bare number. Strings only collapse whitespace so
+ * multiline template literals still emit valid CSS.
+ */
+const cssValue = (kebabProperty: string, value: string | number): string => {
+  if (typeof value === "string") return value.replace(/\s+/g, " ").trim();
+  if (value === 0 || kebabProperty.startsWith("--")) return String(value);
+  return UNITLESS_PROPERTIES.has(kebabProperty) ? String(value) : `${value}px`;
+};
+
+const UNITLESS_PROPERTIES = new Set([
+  "animation-iteration-count",
+  "aspect-ratio",
+  "border-image-outset",
+  "border-image-slice",
+  "border-image-width",
+  "column-count",
+  "columns",
+  "fill-opacity",
+  "flex",
+  "flex-grow",
+  "flex-shrink",
+  "flood-opacity",
+  "font-weight",
+  "grid-area",
+  "grid-column",
+  "grid-column-end",
+  "grid-column-start",
+  "grid-row",
+  "grid-row-end",
+  "grid-row-start",
+  "initial-letter",
+  "line-clamp",
+  "-webkit-line-clamp",
+  "line-height",
+  "opacity",
+  "order",
+  "orphans",
+  "scale",
+  "stop-opacity",
+  "stroke-dasharray",
+  "stroke-dashoffset",
+  "stroke-miterlimit",
+  "stroke-opacity",
+  "stroke-width",
+  "tab-size",
+  "widows",
+  "z-index",
+  "zoom",
+]);
 
 const bpToken = (key: string) => {
   const t = key.trim().replace(/[^a-zA-Z0-9_-]+/g, "");
@@ -107,7 +153,8 @@ const nestedRules = (style: StyleObject, parentSelector: string): string[] => {
     if (value === undefined || value === null) continue;
 
     if (typeof value !== "object" || Array.isArray(value)) {
-      declarations += `${camelToKebab(key)}:${cssValue(value as string | number)};`;
+      const kebabProperty = camelToKebab(key);
+      declarations += `${kebabProperty}:${cssValue(kebabProperty, value as string | number)};`;
     } else if (key.startsWith("@")) {
       const conditionedRules = nestedRules(value, parentSelector);
       childRules.push(...conditionedRules.map((rule) => `${key}{${rule}}`));
@@ -220,7 +267,7 @@ const makeAtom = (
   order: number
 ): EmitAtom => {
   const kebab = camelToKebab(prop);
-  const normalized = cssValue(value);
+  const normalized = cssValue(kebab, value);
   const core = hash(`${kebab}:${normalized}`);
   const id = bpKey
     ? `${prefix}-${bpToken(bpKey)}-${core}`

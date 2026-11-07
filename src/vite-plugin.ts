@@ -3,19 +3,27 @@ import { readFileSync } from "node:fs";
 import { dirname, normalize, resolve as pathResolve } from "node:path";
 import { emitStyle, type EmitAtom, type EmitStyleContext } from "./emitStyle.js";
 import { composeAtomCss } from "./composeCss.js";
-import { analyzeStyleCalls } from "./staticAnalyze.js";
+import {
+  analyzeStyleCalls,
+  type AnalyzeExtras,
+  type StyleHandleBinding,
+} from "./staticAnalyze.js";
 import {
   loadSomStyleConfig,
   resolveSomStyleConfigPath,
   type LoadedStyleConfig,
 } from "./loadConfig.js";
 import {
+  collectReExports,
   collectStyleImportRefs,
   evalAllExportedStringMaps,
   evalExportedStyleOptions,
 } from "./resolveImports.js";
 import { expandRecipeConfig, recipeSelectionKey } from "./recipeExpand.js";
-import { transformThemeForBuild } from "./themeStatic.js";
+import {
+  evalExportedThemeHandles,
+  transformThemeForBuild,
+} from "./themeStatic.js";
 import type { ResponsiveStyleOptions } from "./types.js";
 
 const VIRTUAL_PREFIX = "virtual:som-style-css:";
@@ -54,87 +62,206 @@ type ResolveFn = (
   importer?: string
 ) => Promise<string | { id: string } | null | undefined>;
 
+/**
+ * Everything static analysis needs from other project modules: imported
+ * option objects, token maps (constant.js, theme.js) and style handles.
+ * Every project file read is reported to `watchFile` so edits re-extract.
+ */
+const loadAnalyzeExtras = async (
+  code: string,
+  importerId: string,
+  resolve: ResolveFn,
+  watchFile?: (filePath: string) => void,
+  visitingExports: Set<string> = new Set()
+): Promise<AnalyzeExtras> => ({
+  externalOptions: await loadExternalOptions(code, importerId, resolve),
+  tokenMaps: await loadTokenMaps(code, importerId, resolve, watchFile),
+  importedHandles: await loadImportedHandles(
+    code,
+    importerId,
+    resolve,
+    watchFile,
+    visitingExports
+  ),
+});
+
 const loadExternalOptions = async (
   code: string,
   importerId: string,
   resolve: ResolveFn
 ): Promise<Map<string, ResponsiveStyleOptions>> => {
-  const map = new Map<string, ResponsiveStyleOptions>();
-  const refs = collectStyleImportRefs(code);
-  if (refs.length === 0) return map;
-
-  for (const ref of refs) {
-    const resolved = await resolve(ref.source, importerId);
-    const resolvedId =
-      typeof resolved === "string" ? resolved : resolved?.id ?? null;
-    if (!resolvedId) continue;
-    const filePath = normalize(resolvedId.split("?")[0] ?? resolvedId);
-    if (filePath.includes("node_modules")) continue;
-
-    let source: string;
-    try {
-      source = readFileSync(filePath, "utf8");
-    } catch {
-      continue;
-    }
-
-    const options = evalExportedStyleOptions(source, ref.imported);
-    if (options) map.set(ref.local, options);
+  const externalOptions = new Map<string, ResponsiveStyleOptions>();
+  for (const ref of collectStyleImportRefs(code)) {
+    const importedModule = await readImportedModule(ref.source, importerId, resolve);
+    if (!importedModule) continue;
+    const options = evalExportedStyleOptions(importedModule.source, ref.imported);
+    if (options) externalOptions.set(ref.local, options);
   }
-
-  return map;
+  return externalOptions;
 };
 
-/** Load string token maps from relative imports (project constant.js — any export name). */
+/** constant.js string maps (any export name) and theme.js `defineTheme` handles. */
 const loadTokenMaps = async (
   code: string,
   importerId: string,
   resolve: ResolveFn,
-  watchFile?: (id: string) => void
+  watchFile?: (filePath: string) => void
 ): Promise<Map<string, Record<string, string>>> => {
-  const map = new Map<string, Record<string, string>>();
-  const refs = collectStyleImportRefs(code);
-  if (refs.length === 0) return map;
+  const tokenMaps = new Map<string, Record<string, string>>();
+  for (const ref of collectStyleImportRefs(code)) {
+    const importedModule = await readImportedModule(ref.source, importerId, resolve);
+    if (!importedModule) continue;
 
-  const readLocal = (filePath: string): string | null => {
-    try {
-      return readFileSync(filePath, "utf8");
-    } catch {
-      return null;
-    }
-  };
+    const tokenMap =
+      evalAllExportedStringMaps(importedModule.source).get(ref.imported) ??
+      evalExportedThemeHandles(importedModule.source, ref.imported);
+    if (!tokenMap) continue;
+    watchFile?.(importedModule.filePath);
+    tokenMaps.set(ref.local, tokenMap);
+  }
+  return tokenMaps;
+};
 
-  for (const ref of refs) {
-    let filePath: string | null = null;
-    let source: string | null = null;
+/** Style handles imported from project modules, for cross-file `.extend()`. */
+const loadImportedHandles = async (
+  code: string,
+  importerId: string,
+  resolve: ResolveFn,
+  watchFile: ((filePath: string) => void) | undefined,
+  visitingExports: Set<string>
+): Promise<Map<string, StyleHandleBinding>> => {
+  const importedHandles = new Map<string, StyleHandleBinding>();
+  for (const ref of collectStyleImportRefs(code)) {
+    const handle = await resolveExportedHandle(
+      ref.source,
+      ref.imported,
+      importerId,
+      resolve,
+      watchFile,
+      visitingExports
+    );
+    if (handle) importedHandles.set(ref.local, handle);
+  }
+  return importedHandles;
+};
 
-    // Prefer path resolve — Vite this.resolve often fails for sibling ./ files here.
-    if (ref.source.startsWith(".")) {
-      filePath = normalize(pathResolve(dirname(importerId), ref.source));
-      source = readLocal(filePath);
-    }
+/**
+ * Follows `export { x } from` / `export * from` to the module that declares
+ * the handle, then analyzes that module with its own imports.
+ */
+const resolveExportedHandle = async (
+  source: string,
+  exportName: string,
+  importerId: string,
+  resolve: ResolveFn,
+  watchFile: ((filePath: string) => void) | undefined,
+  visitingExports: Set<string>
+): Promise<StyleHandleBinding | null> => {
+  const importedModule = await readImportedModule(source, importerId, resolve);
+  if (!importedModule) return null;
+  const visitKey = `${importedModule.filePath}#${exportName}`;
+  if (visitingExports.has(visitKey)) return null;
+  visitingExports.add(visitKey);
 
-    if (source == null) {
-      const resolved = await resolve(ref.source, importerId);
-      const resolvedId =
-        typeof resolved === "string" ? resolved : resolved?.id ?? null;
-      if (!resolvedId) continue;
-      filePath = normalize(resolvedId.split("?")[0] ?? resolvedId);
-      if (filePath.includes("node_modules")) continue;
-      source = readLocal(filePath);
-    }
+  const reExportedHandle = await resolveReExportedHandle(
+    importedModule,
+    exportName,
+    resolve,
+    watchFile,
+    visitingExports
+  );
+  if (reExportedHandle) return reExportedHandle;
+  if (!mayContainSomStyleCalls(importedModule.source)) return null;
 
-    if (source == null || filePath == null) continue;
-    if (filePath.includes("node_modules")) continue;
+  try {
+    const moduleExtras = await loadAnalyzeExtras(
+      importedModule.source,
+      importedModule.filePath,
+      resolve,
+      watchFile,
+      visitingExports
+    );
+    const { exportedHandles } = analyzeStyleCalls(importedModule.source, moduleExtras);
+    const handle = exportedHandles.get(exportName) ?? null;
+    if (handle) watchFile?.(importedModule.filePath);
+    return handle;
+  } catch {
+    // A module the parser cannot read holds no handle we could extend.
+    return null;
+  }
+};
 
-    watchFile?.(filePath);
-    const exported = evalAllExportedStringMaps(source);
-    const table = exported.get(ref.imported);
-    if (table) map.set(ref.local, table);
+const resolveReExportedHandle = async (
+  importedModule: ImportedModule,
+  exportName: string,
+  resolve: ResolveFn,
+  watchFile: ((filePath: string) => void) | undefined,
+  visitingExports: Set<string>
+): Promise<StyleHandleBinding | null> => {
+  let reExports: ReturnType<typeof collectReExports>;
+  try {
+    reExports = collectReExports(importedModule.source);
+  } catch {
+    return null;
   }
 
-  return map;
+  for (const reExport of reExports) {
+    if (reExport.kind === "named" && reExport.exported !== exportName) continue;
+    const handle = await resolveExportedHandle(
+      reExport.source,
+      reExport.kind === "named" ? reExport.imported : exportName,
+      importedModule.filePath,
+      resolve,
+      watchFile,
+      visitingExports
+    );
+    if (handle) {
+      watchFile?.(importedModule.filePath);
+      return handle;
+    }
+  }
+  return null;
 };
+
+type ImportedModule = { filePath: string; source: string };
+
+/** Reads a project module an import points at; packages in node_modules are skipped. */
+const readImportedModule = async (
+  source: string,
+  importerId: string,
+  resolve: ResolveFn
+): Promise<ImportedModule | null> => {
+  // Vite's resolve often misses sibling ./ files at this point, so try the path first.
+  if (source.startsWith(".")) {
+    const filePath = normalize(pathResolve(dirname(importerId), source));
+    const fileSource = readSourceFile(filePath);
+    if (fileSource != null) return { filePath, source: fileSource };
+  }
+
+  const resolved = await resolve(source, importerId).catch(() => null);
+  const resolvedId = typeof resolved === "string" ? resolved : resolved?.id ?? null;
+  if (!resolvedId || resolvedId.startsWith("\0")) return null;
+  const filePath = normalize(resolvedId.split("?")[0] ?? resolvedId);
+  if (filePath.includes("node_modules")) return null;
+  const fileSource = readSourceFile(filePath);
+  return fileSource == null ? null : { filePath, source: fileSource };
+};
+
+const readSourceFile = (filePath: string): string | null => {
+  try {
+    return readFileSync(filePath, "utf8");
+  } catch {
+    return null;
+  }
+};
+
+/** Cheap text check before parsing; the analyzer decides what is really som-style. */
+const mayContainSomStyleCalls = (code: string): boolean =>
+  /\bstyle\s*\(/.test(code) ||
+  /\.extend\s*\(/.test(code) ||
+  /\bvariants\s*\(/.test(code) ||
+  /\brecipe\s*\(/.test(code) ||
+  /\bdefineTheme\s*\(/.test(code);
 
 const emitRecipeLookupExpr = (
   classMap: Record<string, string>,
@@ -156,10 +283,9 @@ export const transformForBuild = (
   code: string,
   fileId: string,
   ctx: EmitStyleContext,
-  externalOptions?: Map<string, ResponsiveStyleOptions>,
-  tokenMaps?: Map<string, Record<string, string>>
+  analyzeExtras: AnalyzeExtras = {}
 ): TransformStaticResult => {
-  const hits = analyzeStyleCalls(code, { externalOptions, tokenMaps });
+  const { hits } = analyzeStyleCalls(code, analyzeExtras);
   if (hits.length === 0) {
     return { code, css: "", atoms: [] };
   }
@@ -460,26 +586,21 @@ export function somStyle(opts: SomStylePluginOptions = {}): Plugin[] {
     } catch {
       return;
     }
-    if (!/\bstyle\s*\(/.test(source) && !/\bdefineTheme\s*\(/.test(source)) {
-      return;
-    }
+    if (!mayContainSomStyleCalls(source)) return;
 
     const normalizedId = normalize(filePath);
     const themeResult = transformThemeForBuild(source, filePath);
-    const tokenMaps = await loadTokenMaps(
+    const analyzeExtras = await loadAnalyzeExtras(
       themeResult.code,
       normalizedId,
       resolve,
-      (tokenFile) => {
-        trackTokenConsumer(tokenFile, normalizedId);
-      }
+      (dependencyFile) => trackTokenConsumer(dependencyFile, normalizedId)
     );
     const styleResult = transformForBuild(
       themeResult.code,
       filePath,
       styleConfig,
-      undefined,
-      tokenMaps
+      analyzeExtras
     );
     const consumerKey = encodeURIComponent(filePath);
     applyExtractedCss(consumerKey, themeResult.css, styleResult);
@@ -606,15 +727,7 @@ export function somStyle(opts: SomStylePluginOptions = {}): Plugin[] {
       ) {
         return null;
       }
-      if (
-        !/\bstyle\s*\(/.test(code) &&
-        !/\.extend\s*\(/.test(code) &&
-        !/\bvariants\s*\(/.test(code) &&
-        !/\brecipe\s*\(/.test(code) &&
-        !/\bdefineTheme\s*\(/.test(code)
-      ) {
-        return null;
-      }
+      if (!mayContainSomStyleCalls(code)) return null;
 
       try {
         const resolve: ResolveFn = async (source, importer) => {
@@ -624,26 +737,20 @@ export function somStyle(opts: SomStylePluginOptions = {}): Plugin[] {
           return result;
         };
         const themeResult = transformThemeForBuild(code, id);
-        const externalOptions = await loadExternalOptions(
-          themeResult.code,
-          normalizedId,
-          resolve
-        );
-        const tokenMaps = await loadTokenMaps(
+        const analyzeExtras = await loadAnalyzeExtras(
           themeResult.code,
           normalizedId,
           resolve,
-          (filePath) => {
-            this.addWatchFile(filePath);
-            trackTokenConsumer(filePath, normalizedId);
+          (dependencyFile) => {
+            this.addWatchFile(dependencyFile);
+            trackTokenConsumer(dependencyFile, normalizedId);
           }
         );
         const styleResult = transformForBuild(
           themeResult.code,
           id,
           styleConfig,
-          externalOptions,
-          tokenMaps
+          analyzeExtras
         );
         const consumerKey = encodeURIComponent(id);
         const out = applyExtractedCss(

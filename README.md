@@ -311,7 +311,7 @@ import { space } from "./som-style/constant.js";
 ## Vite와 함께 쓰기 (권장 · 제로런타임에 가깝게)
 
 `somStyle()`을 쓰면 개발·배포 모두에서 정적 스타일이 **미리 CSS**로 묶여 스타일 적용 지연을 방지합니다.
-같은 파일의 `style({ ... })`, `variants({ ... })`, `box.extend({ ... })`는 클래스 문자열(또는 variants 맵)로 바뀝니다.
+`som-style`에서 import한 `style({ ... })`, `variants({ ... })`와 그 핸들의 `.extend({ ... })`는 클래스 문자열(또는 variants 맵)로 바뀝니다. 다른 파일에서 가져온 핸들(`./som-style/components`의 `button` 등)에 `.extend()`해도 됩니다. zod의 `schema.extend()`처럼 som-style이 아닌 호출은 건드리지 않습니다.
 
 ```js
 // vite.config.js
@@ -362,7 +362,13 @@ export const box = style(styles);
 // OK — 다른 파일에서 핸들을 import (markup에서 class로 사용)
 // style.js: export const box = style({ base: { display: "flex" } });
 import { box } from "./style.js";
+
+// OK — 다른 파일의 핸들을 import 해 .extend()
+import { button } from "./som-style/components";
+export const wideButton = button.extend({ base: { width: "100%" } });
 ```
+
+숫자 값은 React 인라인 스타일처럼 `px`이 붙습니다(`width: 320` → `320px`). `opacity`, `zIndex`, `lineHeight`, `flex`처럼 원래 단위가 없는 속성은 그대로 둡니다.
 
 개발 중 스타일을 수정하면 화면에 바로 반영됩니다.
 

@@ -114,5 +114,29 @@ describe("emitStyle atomic", () => {
       `@media (min-width: 1024px){@supports (display: grid){.${pcCompound} a { display:grid; }}}`
     );
   });
+
+  it("adds px to numbers except on unitless properties", () => {
+    const out = emitStyle(
+      {
+        base: {
+          width: 100,
+          marginTop: -4,
+          margin: 0,
+          opacity: 0.5,
+          zIndex: 2,
+          lineHeight: 1.5,
+          "--gap": 3,
+        },
+      },
+      ctx
+    );
+    expect(out.css).toContain("{width:100px;}");
+    expect(out.css).toContain("{margin-top:-4px;}");
+    expect(out.css).toContain("{margin:0;}");
+    expect(out.css).toContain("{opacity:0.5;}");
+    expect(out.css).toContain("{z-index:2;}");
+    expect(out.css).toContain("{line-height:1.5;}");
+    expect(out.css).toContain("{--gap:3;}");
+  });
 });
 

@@ -8,20 +8,8 @@ import type {
   VariableDeclaration,
   VariableDeclarator,
 } from "@babel/types";
+import { evalLiteral } from "./staticAnalyze.js";
 import type { ResponsiveStyleOptions, StyleObject } from "./types.js";
-
-const evalLiteral = (
-  node: Expression
-): string | number | boolean | null | undefined => {
-  if (node.type === "StringLiteral") return node.value;
-  if (node.type === "NumericLiteral") return node.value;
-  if (node.type === "BooleanLiteral") return node.value;
-  if (node.type === "NullLiteral") return null;
-  if (node.type === "TemplateLiteral" && node.expressions.length === 0) {
-    return node.quasis.map((q) => q.value.cooked ?? "").join("");
-  }
-  return undefined;
-};
 
 const evalStyleObject = (
   node: ObjectExpression
@@ -51,21 +39,8 @@ const evalStyleObject = (
       continue;
     }
 
-    if (
-      valueNode.type !== "StringLiteral" &&
-      valueNode.type !== "NumericLiteral" &&
-      valueNode.type !== "BooleanLiteral" &&
-      valueNode.type !== "NullLiteral" &&
-      !(
-        valueNode.type === "TemplateLiteral" &&
-        valueNode.expressions.length === 0
-      )
-    ) {
-      return { ok: false, error: `Dynamic value for "${key}"` };
-    }
-
     const lit = evalLiteral(valueNode as Expression);
-    if (lit === undefined) return { ok: false, error: `Unsupported literal` };
+    if (lit === undefined) return { ok: false, error: `Dynamic value for "${key}"` };
     if (lit === null) continue;
     out[key] = lit as string | number | StyleObject;
   }
@@ -133,7 +108,11 @@ export type StyleImportRef = {
   source: string;
 };
 
-/** Relative named imports that may hold style option objects. */
+/**
+ * Named imports that may hold style options, tokens or handles. Bare package
+ * names are kept too, because path aliases (`@/som-style/components`) look
+ * the same; the caller resolves them and skips anything in node_modules.
+ */
 export const collectStyleImportRefs = (code: string): StyleImportRef[] => {
   const ast = parse(code, {
     sourceType: "module",
@@ -144,7 +123,7 @@ export const collectStyleImportRefs = (code: string): StyleImportRef[] => {
   walk(ast, (node) => {
     if (node.type !== "ImportDeclaration") return;
     const source = node.source.value;
-    if (!source.startsWith(".") && !source.startsWith("/")) return;
+    if (/^som-style(\/|$)/.test(source)) return;
 
     for (const spec of node.specifiers) {
       if (spec.type !== "ImportSpecifier") continue;
@@ -279,3 +258,40 @@ export const evalExportedStyleOptions = (
 
   return found ? optionsFromObject(found) : null;
 };
+
+export type ReExport =
+  | { kind: "named"; exported: string; imported: string; source: string }
+  | { kind: "all"; source: string };
+
+/** `export { button } from "./button.js"` and `export * from "./button.js"`. */
+export const collectReExports = (code: string): ReExport[] => {
+  const ast = parse(code, {
+    sourceType: "module",
+    plugins: ["typescript", "jsx"],
+  });
+  const reExports: ReExport[] = [];
+
+  walk(ast, (node) => {
+    if (node.type === "ExportAllDeclaration") {
+      reExports.push({ kind: "all", source: node.source.value });
+      return;
+    }
+    if (node.type !== "ExportNamedDeclaration" || !node.source) return;
+    for (const specifier of node.specifiers) {
+      if (specifier.type !== "ExportSpecifier") continue;
+      const exported =
+        specifier.exported.type === "Identifier"
+          ? specifier.exported.name
+          : specifier.exported.value;
+      reExports.push({
+        kind: "named",
+        exported,
+        imported: specifier.local.name,
+        source: node.source.value,
+      });
+    }
+  });
+
+  return reExports;
+};
+
