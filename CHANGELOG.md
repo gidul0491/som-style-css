@@ -1,18 +1,12 @@
 # 변경 이력
 
-## 0.2.3
+## 0.2.4
 
 ### 바뀐 것
 
 **스캐폴드의 `preset/` 폴더 이름을 `components/`로 바꿨습니다.** 여러 화면에서 같이 쓰는 UI 스타일(`button.js`, `panel.js` …)을 두는 곳입니다. 라이브러리는 폴더 이름을 쓰지 않으므로, 이미 `som-style/preset/`을 쓰는 프로젝트는 그대로 둬도 됩니다.
 
 ### 고친 것
-
-**개별 속성이 묶음 속성에 덮이던 문제.** `{ padding: 0, paddingTop: "8px" }`처럼 같이 쓰면 위쪽 여백은 8px이어야 하지만, 다른 파일이 `paddingTop: "8px"`를 먼저 쓰면 `padding:0`이 시트에서 뒤로 가서 위쪽 여백이 0이 됐습니다. 이제 같은 화면 구간 안에서는 묶음 속성(`padding`, `border`, `inset` …)이 항상 개별 속성(`paddingTop`, `borderTopColor`, `top` …)보다 앞에 오고, 중첩 규칙(`&:hover` 등)은 그 뒤에 옵니다. 빌드, 런타임, SSR 세 경로에 모두 적용됩니다.
-
-**중첩 안의 중첩에서 바깥 조건이 사라지던 문제.** `"&:hover": { "& span": {...} }`가 `.c span`으로 나와 마우스를 올리지 않아도 적용됐습니다. 이제 `.c:hover span`으로 나옵니다.
-
-**`@media` / `@supports` / `@container` 키가 깨진 CSS를 만들던 문제.** `"@media (hover: hover)": { color: "red" }`가 브라우저가 무시하는 `.c @media …`로 나왔습니다. 이제 현재 선택자를 그 조건으로 감쌉니다. 타입에서도 `@`로 시작하는 키를 받습니다.
 
 **som-style과 상관없는 `.extend()` / `.style()`에서 빌드가 멈추던 문제.** Vite 플러그인이 import를 보지 않고 함수 이름만 보고 분석해서, zod의 `schema.extend()`, `dayjs.extend()`, d3의 `.style()`, 직접 만든 `style()` 함수가 있는 파일에서 빌드가 실패했습니다. 이제 `som-style`에서 import한 `style` / `variants` / `recipe`와 그 핸들의 `.extend()`만 분석합니다. `import { style as css }`, `import * as som`처럼 이름을 바꾼 import도 빌드 때 추출됩니다.
 
@@ -23,6 +17,16 @@
 **단위 없는 숫자가 무시되던 문제.** `width: 100`이 `width:100`으로 나가 브라우저가 버렸습니다. 이제 React 인라인 스타일처럼 `px`을 붙입니다. `opacity`, `zIndex`, `lineHeight`, `flex` 등 원래 단위가 없는 속성과 `0`, CSS 변수는 그대로 둡니다.
 
 **빌드 때 추출되지 않던 값.** `marginTop: -1` 같은 음수와, 같은 파일의 `const gap = "8px"`를 쓴 `{ gap }` 축약형이 이제 추출됩니다.
+
+## 0.2.3
+
+### 고친 것
+
+**개별 속성이 묶음 속성에 덮이던 문제.** `{ padding: 0, paddingTop: "8px" }`처럼 같이 쓰면 위쪽 여백은 8px이어야 하지만, 다른 파일이 `paddingTop: "8px"`를 먼저 쓰면 `padding:0`이 시트에서 뒤로 가서 위쪽 여백이 0이 됐습니다. 이제 같은 화면 구간 안에서는 묶음 속성(`padding`, `border`, `inset` …)이 항상 개별 속성(`paddingTop`, `borderTopColor`, `top` …)보다 앞에 오고, 중첩 규칙(`&:hover` 등)은 그 뒤에 옵니다. 빌드, 런타임, SSR 세 경로에 모두 적용됩니다.
+
+**중첩 안의 중첩에서 바깥 조건이 사라지던 문제.** `"&:hover": { "& span": {...} }`가 `.c span`으로 나와 마우스를 올리지 않아도 적용됐습니다. 이제 `.c:hover span`으로 나옵니다.
+
+**`@media` / `@supports` / `@container` 키가 깨진 CSS를 만들던 문제.** `"@media (hover: hover)": { color: "red" }`가 브라우저가 무시하는 `.c @media …`로 나왔습니다. 이제 현재 선택자를 그 조건으로 감쌉니다. 타입에서도 `@`로 시작하는 키를 받습니다.
 
 ## 0.2.2
 

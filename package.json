@@ -1,6 +1,6 @@
 {
   "name": "som-style",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Mobile-first CSS-in-JS helper with OKLCH design tokens by default",
   "type": "module",
   "main": "./dist/index.js",
