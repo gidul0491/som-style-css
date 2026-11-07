@@ -6,7 +6,7 @@ import {
   type EmitStyleContext,
 } from "./emitStyle.js";
 import {
-  atomCss,
+  atomRules,
   composeAtomCss,
   layerOrderForContext,
 } from "./composeCss.js";
@@ -136,7 +136,8 @@ type SheetBucket = {
   order: number;
   layer: string;
   el: HTMLStyleElement;
-  rules: string[];
+  /** Kept sorted by atom priority so longhands land after their shorthands. */
+  rules: Array<{ priority: number; rule: string }>;
   /** insertRule failed once — this element is text-driven from now on. */
   textMode: boolean;
 };
@@ -212,22 +213,23 @@ const getBucket = (atom: EmitAtom): SheetBucket | null => {
   return bucket;
 };
 
-/** A compound atom (&:hover, descendants) can carry several rules. */
-const splitRules = (cssContent: string): string[] =>
-  cssContent
-    .split(/(?<=\})\s*(?=@layer|@media|\.[a-zA-Z0-9_-]+)/g)
-    .map((r) => r.trim())
-    .filter(Boolean);
-
-const appendToBucket = (bucket: SheetBucket, cssContent: string) => {
-  const rules = splitRules(cssContent);
-  bucket.rules.push(...rules);
+const insertIntoBucket = (bucket: SheetBucket, atom: EmitAtom, rules: string[]) => {
+  const nextHigherIndex = bucket.rules.findIndex(
+    (entry) => entry.priority > atom.priority
+  );
+  const insertIndex =
+    nextHigherIndex === -1 ? bucket.rules.length : nextHigherIndex;
+  bucket.rules.splice(
+    insertIndex,
+    0,
+    ...rules.map((rule) => ({ priority: atom.priority, rule }))
+  );
 
   if (!bucket.textMode && bucket.el.sheet) {
     try {
-      for (const rule of rules) {
-        bucket.el.sheet.insertRule(rule, bucket.el.sheet.cssRules.length);
-      }
+      rules.forEach((rule, offset) =>
+        bucket.el.sheet!.insertRule(rule, insertIndex + offset)
+      );
       return;
     } catch {
       // Writing textContent re-parses the sheet, discarding insertRule work —
@@ -237,7 +239,7 @@ const appendToBucket = (bucket: SheetBucket, cssContent: string) => {
   }
 
   bucket.textMode = true;
-  bucket.el.textContent = bucket.rules.join("\n");
+  bucket.el.textContent = bucket.rules.map((entry) => entry.rule).join("\n");
 };
 
 const ensureAtoms = (atoms: EmitAtom[]) => {
@@ -248,7 +250,7 @@ const ensureAtoms = (atoms: EmitAtom[]) => {
       const bucket = getBucket(atom);
       if (!bucket) continue;
       injectedAtoms.add(atom.id);
-      appendToBucket(bucket, atomCss(atom, options));
+      insertIntoBucket(bucket, atom, atomRules(atom, options));
     }
     return;
   }

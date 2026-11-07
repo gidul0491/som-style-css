@@ -120,6 +120,20 @@ describe("runtime sheet order", () => {
 
     expect(sheetText("som-sheet-base").split("color: gray").length - 1).toBe(1);
   });
+
+  it("keeps a longhand after a later-injected shorthand", async () => {
+    const { style, configure } = await freshRuntime();
+    configure({ isServer: () => false, breakpoints: { pc: "1024px" } });
+
+    style({ base: { paddingTop: "8px" } });
+    style({ base: { padding: 0, paddingTop: "8px" } });
+
+    const baseText = sheetText("som-sheet-base");
+    expect(baseText.indexOf("padding: 0")).toBeGreaterThan(-1);
+    expect(baseText.indexOf("padding: 0")).toBeLessThan(
+      baseText.indexOf("padding-top: 8px")
+    );
+  });
 });
 
 describe("SSR collected styles", () => {

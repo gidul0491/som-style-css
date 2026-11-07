@@ -2,7 +2,8 @@ import type { Properties, PropertiesHyphen } from "csstype";
 
 /**
  * Flat CSS declarations (camelCase preferred; kebab-case also ok),
- * plus `&…` nested selectors. Emit normalizes keys to kebab-case CSS.
+ * plus `&…` nested selectors and `@media` / `@supports` / `@container`
+ * condition blocks. Emit normalizes keys to kebab-case CSS.
  * Unknown property names error on object literals (typo / autocomplete).
  */
 export type StyleObject = {
@@ -11,6 +12,8 @@ export type StyleObject = {
   [K in keyof PropertiesHyphen]?: PropertiesHyphen[K] | null;
 } & {
   [K in `&${string}`]?: StyleObject | null | undefined;
+} & {
+  [K in `@${string}`]?: StyleObject | null | undefined;
 };
 
 export type CSSValue = string | number;

@@ -83,4 +83,36 @@ describe("emitStyle atomic", () => {
       `${scope} :is(a, button), ${scope}.active { color:green; }`
     );
   });
+
+  it("nests a selector inside its parent selector", () => {
+    const out = emitStyle(
+      { base: { "&:hover, &:focus": { "& span": { color: "red" } } } },
+      ctx
+    );
+    const compoundClass = out.className.split(" ").find((c) => /-n/.test(c));
+    const scope = `.${compoundClass}`;
+    expect(out.css).toContain(
+      `${scope}:hover span, ${scope}:focus span { color:red; }`
+    );
+  });
+
+  it("wraps at-rule keys around the current selector", () => {
+    const out = emitStyle(
+      {
+        base: { "@media (hover: hover)": { color: "red" } },
+        pc: { "& a": { "@supports (display: grid)": { display: "grid" } } },
+      },
+      ctx
+    );
+    const [baseCompound, pcCompound] = out.className
+      .split(" ")
+      .filter((c) => /-n/.test(c));
+    expect(out.css).toContain(
+      `@media (hover: hover){.${baseCompound} { color:red; }}`
+    );
+    expect(out.css).toContain(
+      `@media (min-width: 1024px){@supports (display: grid){.${pcCompound} a { display:grid; }}}`
+    );
+  });
 });
+
