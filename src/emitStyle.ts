@@ -98,9 +98,7 @@ const processNestedObject = (
     if (value === undefined || value === null) return;
 
     if (typeof value === "object" && !Array.isArray(value)) {
-      const subSelector = key.includes("&")
-        ? key.replace("&", `.${className}`)
-        : `.${className} ${key}`;
+      const subSelector = scopeSelectorList(key, `.${className}`);
       const processed = processNestedObject(value, className, subSelector);
       extraRules += processed.mainRules + processed.extraRules;
     } else {
@@ -112,6 +110,47 @@ const processNestedObject = (
     return { mainRules: `${selectorPrefix} { ${mainRules} }`, extraRules };
   }
   return { mainRules, extraRules };
+};
+
+/**
+ * Scopes every selector in a comma list to the owning class:
+ * `& a, & button` -> `.c a, .c button`, `a, button` -> `.c a, .c button`.
+ * Commas inside `()`, `[]` or quotes (e.g. `:is(a, b)`) do not split the list.
+ */
+const scopeSelectorList = (selectorList: string, scopeSelector: string) =>
+  splitTopLevelCommas(selectorList)
+    .map((selector) =>
+      selector.includes("&")
+        ? selector.split("&").join(scopeSelector)
+        : `${scopeSelector} ${selector}`
+    )
+    .join(", ");
+
+const splitTopLevelCommas = (selectorList: string) => {
+  const selectors: string[] = [];
+  let bracketDepth = 0;
+  let openQuote: string | null = null;
+  let selectorStart = 0;
+
+  for (let index = 0; index < selectorList.length; index++) {
+    const char = selectorList[index];
+    if (openQuote) {
+      if (char === "\\") index++;
+      else if (char === openQuote) openQuote = null;
+    } else if (char === '"' || char === "'") {
+      openQuote = char;
+    } else if (char === "(" || char === "[") {
+      bracketDepth++;
+    } else if (char === ")" || char === "]") {
+      bracketDepth--;
+    } else if (char === "," && bracketDepth === 0) {
+      selectors.push(selectorList.slice(selectorStart, index));
+      selectorStart = index + 1;
+    }
+  }
+  selectors.push(selectorList.slice(selectorStart));
+
+  return selectors.map((selector) => selector.trim()).filter(Boolean);
 };
 
 export const parsePxNumeric = (val: string): number => {
